@@ -45,7 +45,7 @@ class BusScheduleWidgetProvider : AppWidgetProvider() {
         val calendar = Calendar.getInstance()
         val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
         val isWeekend = dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY
-        val schedule = if (isWeekend) {
+        val todaySchedule = if (isWeekend) {
             ScheduleData.weekendSchedule
         } else {
             ScheduleData.workingDaysSchedule
@@ -53,52 +53,61 @@ class BusScheduleWidgetProvider : AppWidgetProvider() {
 
         val currentTimeInMinutes = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE)
 
-        for (trip in schedule.trips) {
-            val boyarkaTime = trip.timeFromBoyarka
-            val malyutyankaTime = trip.timeFromMalyutyanka
-
-            val boyarkaTripTimeInMinutes = if (boyarkaTime.isNotEmpty()) {
-                val parts = boyarkaTime.split(":")
-                if (parts.size == 2) {
-                    val hour = parts[0].toIntOrNull() ?: 0
-                    val minute = parts[1].toIntOrNull() ?: 0
-                    hour * 60 + minute
-                } else null
-            } else null
-
-            val malyutyankaTripTimeInMinutes = if (malyutyankaTime.isNotEmpty()) {
-                val parts = malyutyankaTime.split(":")
-                if (parts.size == 2) {
-                    val hour = parts[0].toIntOrNull() ?: 0
-                    val minute = parts[1].toIntOrNull() ?: 0
-                    hour * 60 + minute
-                } else null
-            } else null
-
-            // Find the earliest valid time for the current trip
-            val earliestTripTimeInMinutes = listOfNotNull(boyarkaTripTimeInMinutes, malyutyankaTripTimeInMinutes).minOrNull()
-
-            if (earliestTripTimeInMinutes != null && earliestTripTimeInMinutes >= currentTimeInMinutes) {
-                return Pair(boyarkaTime, malyutyankaTime)
+        // Helper function to parse time string to minutes
+        fun timeToMinutes(time: String): Int? {
+            if (time.isEmpty()) return null
+            val parts = time.split(":")
+            return if (parts.size == 2) {
+                val hour = parts[0].toIntOrNull() ?: 0
+                val minute = parts[1].toIntOrNull() ?: 0
+                hour * 60 + minute
+            } else {
+                null
             }
         }
 
-        // If no more trips for today, return the first trip for tomorrow.
-        val tomorrowCalendar = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
-        val tomorrowDayOfWeek = tomorrowCalendar.get(Calendar.DAY_OF_WEEK)
-        val isTomorrowWeekend = tomorrowDayOfWeek == Calendar.SATURDAY || tomorrowDayOfWeek == Calendar.SUNDAY
-        val tomorrowSchedule = if (isTomorrowWeekend) {
-            ScheduleData.weekendSchedule
-        } else {
-            ScheduleData.workingDaysSchedule
+        // --- NEW LOGIC START ---
+
+        // 1. Find the next departure from Boyarka for TODAY
+        var nextBoyarkaTime = todaySchedule.trips.firstOrNull { trip ->
+            val tripTime = timeToMinutes(trip.timeFromBoyarka)
+            tripTime != null && tripTime >= currentTimeInMinutes
+        }?.timeFromBoyarka
+
+        // 2. Find the next departure from Malyutyanka for TODAY
+        var nextMalyutyankaTime = todaySchedule.trips.firstOrNull { trip ->
+            val tripTime = timeToMinutes(trip.timeFromMalyutyanka)
+            tripTime != null && tripTime >= currentTimeInMinutes
+        }?.timeFromMalyutyanka
+
+        // 3. If a trip is NOT found for today, find the first one for TOMORROW
+        if (nextBoyarkaTime == null || nextMalyutyankaTime == null) {
+            val tomorrowCalendar = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
+            val tomorrowDayOfWeek = tomorrowCalendar.get(Calendar.DAY_OF_WEEK)
+            val isTomorrowWeekend = tomorrowDayOfWeek == Calendar.SATURDAY || tomorrowDayOfWeek == Calendar.SUNDAY
+            val tomorrowSchedule = if (isTomorrowWeekend) {
+                ScheduleData.weekendSchedule
+            } else {
+                ScheduleData.workingDaysSchedule
+            }
+
+            // If Boyarka time was not found for today, get the FIRST one from tomorrow's schedule
+            if (nextBoyarkaTime == null) {
+                nextBoyarkaTime = tomorrowSchedule.trips
+                    .firstOrNull { it.timeFromBoyarka.isNotEmpty() }
+                    ?.timeFromBoyarka
+            }
+
+            // If Malyutyanka time was not found for today, get the FIRST one from tomorrow's schedule
+            if (nextMalyutyankaTime == null) {
+                nextMalyutyankaTime = tomorrowSchedule.trips
+                    .firstOrNull { it.timeFromMalyutyanka.isNotEmpty() }
+                    ?.timeFromMalyutyanka
+            }
         }
 
-        val tomorrowFirstTrip = tomorrowSchedule.trips.firstOrNull()
-        return if (tomorrowFirstTrip != null) {
-            Pair(tomorrowFirstTrip.timeFromBoyarka, tomorrowFirstTrip.timeFromMalyutyanka)
-        } else {
-            // Default to empty strings if no schedule is found
-            Pair("", "")
-        }
+        // --- NEW LOGIC END ---
+
+        return Pair(nextBoyarkaTime ?: "", nextMalyutyankaTime ?: "")
     }
 }
